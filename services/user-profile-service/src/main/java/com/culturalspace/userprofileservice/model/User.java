@@ -7,6 +7,8 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table; // Import for @Table
 
+import java.util.Objects;
+
 @Entity // Marks this class as a JPA entity, mapped to a database table
 @Table(name = "app_user") // Good practice to avoid conflict with SQL 'USER' keyword
 public class User {
@@ -30,17 +32,17 @@ public class User {
         this.role = role;
     }
 
-    // --- Getters and Setters ---
-    // (You can use Alt+Insert or Cmd+N in IntelliJ to generate these)
+    // --- Getters ---
     public Long getId() { return id; }
-    public void setId(Long id) { this.id = id; }
     public String getUsername() { return username; }
-    public void setUsername(String username) { this.username = username; }
     public String getEmail() { return email; }
-    public void setEmail(String email) { this.email = email; }
     public String getPassword() { return password; }
-    public void setPassword(String password) { this.password = password; }
     public String getRole() { return role; }
+
+    // --- Setters ---
+    public void setUsername(String username) { this.username = username; }
+    public void setEmail(String email) { this.email = email; }
+    public void setPassword(String password) { this.password = password; }
     public void setRole(String role) { this.role = role; }
 
     @Override
@@ -49,7 +51,20 @@ public class User {
                 "id=" + id +
                 ", username='" + username + '\'' +
                 ", email='" + email + '\'' +
-                ", role='" + role + '\'' + // Do NOT include password in toString for security
+                ", password='" + password + '\'' +
+                ", role='" + role + '\'' +
                 '}';
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (o == null || getClass() != o.getClass()) return false;
+        User user = (User) o;
+        return Objects.equals(id, user.id) && Objects.equals(username, user.username) && Objects.equals(email, user.email) && Objects.equals(password, user.password) && Objects.equals(role, user.role);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(id, username, email, password, role);
     }
 }

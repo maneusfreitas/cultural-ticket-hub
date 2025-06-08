@@ -1,0 +1,30 @@
+server:
+  port: 8080 # Unique port for this service
+
+spring:
+  application:
+    name: user-profile-service
+  datasource: # PostgreSQL configuration
+    url: jdbc:postgresql://localhost:5432/user_profile_db # Make sure host, port, db name are correct
+    username: user_profile_user
+    password: your_new_secure_password
+    driverClassName: org.postgresql.Driver
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: update # Automatically create/update schema based on your @Entity classes
+    show-sql: true # Log SQL queries to console for debugging
+    properties:
+      hibernate:
+        format_sql: true # Format logged SQL for readability
+
+  #security:
+    # Disable CSRF for easier testing with tools like Postman/Insomnia (ONLY for development/demo!)
+    # For production, CSRF protection is crucial.
+    #csrf:
+      #disable: true
+    # Configure in-memory user for basic auth during development (ONLY for development/demo!)
+    #user:
+      #name: admin
+      #password: '{noop}password' # '{noop}' prefix means no password encoding (DANGEROUS IN PROD!)
+      #roles: USER,ADMIN

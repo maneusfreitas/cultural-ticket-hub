@@ -9,10 +9,10 @@
         <relativePath/> <!-- lookup parent from repository -->
     </parent>
     <groupId>com.culturalspace</groupId>
-    <artifactId>user-profile-service</artifactId>
+    <artifactId>event-catalog-service</artifactId>
     <version>0.0.1-SNAPSHOT</version>
-    <name>user-profile-service</name>
-    <description>user-profile-service</description>
+    <name>event-catalog-service</name>
+    <description>event-catalog-service</description>
     <url/>
     <licenses>
         <license/>
