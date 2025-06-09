@@ -1,0 +1,6 @@
+server:
+  port: 8086 # Unique port for this service
+
+spring:
+  application:
+    name: notification-service
