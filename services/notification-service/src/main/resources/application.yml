@@ -4,3 +4,29 @@ server:
 spring:
   application:
     name: notification-service
+  datasource:
+    url: jdbc:postgresql://localhost:5432/notification_log_db
+    username: user_profile_user
+    password: your_new_secure_password
+    driverClassName: org.postgresql.Driver
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: update # Automatically create/update schema based on your @Entity classes
+    show-sql: true # Log SQL queries to console for debugging
+    properties:
+      hibernate:
+        format_sql: true
+  kafka:
+    consumer:
+      # bootstrap-servers will be provided by Docker's environment variable (broker:9092)
+      group-id: notification-service-group # All consumers in this group will get a shared partition assignment
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      auto-offset-reset: earliest # Start reading from the beginning if no offset is found for this group
+      properties:
+        spring:
+          json:
+            value:
+              default:
+                type: com.culturalspace.notificationservice.event.BookingConfirmedEvent # Fully qualified class name of your Kafka Event DTO

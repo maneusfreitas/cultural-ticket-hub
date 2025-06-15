@@ -1,28 +1,63 @@
-// src/main/java/com/culturalspace/notificationservice/service/NotificationService.java
 package com.culturalspace.notificationservice.service;
 
-import com.culturalspace.notificationservice.model.NotificationRequest;
+import com.culturalspace.notificationservice.event.BookingConfirmedEvent;
+import com.culturalspace.notificationservice.model.NotificationLog; // Import your NotificationLog entity
+import com.culturalspace.notificationservice.repository.NotificationRepository; // Import your repository
+import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Service;
 
-import java.time.LocalDateTime;
+import java.time.LocalDateTime; // For logging the timestamp
 
 @Service
 public class NotificationService {
 
-    public void sendNotification(NotificationRequest request) {
-        // In a real-world application, this method would integrate with an
-        // actual email service (e.g., SendGrid, Mailgun), SMS gateway (Twilio),
-        // or a push notification provider.
+    private final NotificationRepository notificationLogRepository; // Inject the repository
 
-        System.out.println("--------------------------------------------------");
-        System.out.println("NotificationService: Sending notification at " + LocalDateTime.now());
-        System.out.println("  Recipient: " + request.getRecipient());
-        System.out.println("  Subject: " + request.getSubject());
-        System.out.println("  Message: " + request.getMessage());
-        System.out.println("Notification sent successfully (simulated).");
-        System.out.println("--------------------------------------------------");
+    // Spring will automatically inject NotificationLogRepository here
+    public NotificationService(NotificationRepository notificationLogRepository) {
+        this.notificationLogRepository = notificationLogRepository;
+    }
 
-        // You might also save notification logs to a database here
-        // (e.g., notificationRepository.save(new NotificationLog(...)))
+    /**
+     * This method acts as a Kafka consumer, listening for BookingConfirmedEvent messages.
+     * When a message is published to the "booking-confirmed-topic", Spring Kafka
+     * automatically deserializes the message and invokes this method.
+     *
+     * @param event The deserialized BookingConfirmedEvent object containing confirmed booking details.
+     */
+    @KafkaListener(topics = "booking-confirmed-topic", groupId = "notification-service-group", containerFactory = "kafkaListenerContainerFactory")
+    public void listen(BookingConfirmedEvent event) {
+        // Outputting the received event details to the console
+        System.out.println("----------------------------------------------------");
+        System.out.println("NotificationService: Received Booking Confirmed Event from Kafka!");
+        System.out.println("  Booking ID: " + event.getBookingId());
+        System.out.println("  User ID: " + event.getUserId()); // Assuming you have getUserId()
+        System.out.println("  Number of Seats: " + event.getNumberOfSeats());
+        System.out.println("  Total Price: " + event.getTotalPrice()); // Assuming you have getTotalPrice()
+        // Ensure your BookingConfirmedEvent has getters for all these fields,
+        // and also for userEmail, eventName, eventDateTime which are used below for NotificationLog.
+        System.out.println("----------------------------------------------------");
+
+        // --- NEW: Save the Kafka message data to the database ---
+        try {
+            // Create a new NotificationLog object from the event data
+            NotificationLog notificationLog = new NotificationLog(
+                    event.getBookingId(),
+                    event.getUserId(),
+                    LocalDateTime.now() // Timestamp when this log entry is created
+            );
+
+            // Save the log entry using the repository
+            NotificationLog savedLog = notificationLogRepository.save(notificationLog);
+            System.out.println("NotificationService: Kafka message logged to DB. Log ID: " + savedLog.getId());
+
+        } catch (Exception e) {
+            // Log any errors that occur during the database save operation
+            System.err.println("NotificationService: Failed to save notification log to database: " + e.getMessage());
+            e.printStackTrace(); // Print the full stack trace for detailed debugging
+        }
+
+        // --- Placeholder for actual notification logic (e.g., sending email) ---
+        // emailService.sendBookingConfirmation(event.getUserEmail(), event.getEventName(), event.getBookingId(), event.getEventDateTime());
     }
 }

@@ -17,6 +17,17 @@ spring:
     properties:
       hibernate:
         format_sql: true # Format logged SQL for readability
+  kafka:
+    producer:
+      # bootstrap-servers will be provided by Docker's environment variable (broker:9092)
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        spring:
+          json:
+            add:
+              type:
+                headers: false # For simpler JSON event payloads
 
 services:
   scheduling-availability-service:
@@ -25,5 +36,3 @@ services:
     url: http://localhost:8083
   payment-processing-service:
     url: http://localhost:8085
-  notification-service:
-    url: http://localhost:8086

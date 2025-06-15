@@ -1,10 +1,12 @@
 package com.culturalspace.bookingservice.service;
 
+import com.culturalspace.bookingservice.event.BookingConfirmedEvent;
 import com.culturalspace.bookingservice.model.Booking;
 import com.culturalspace.bookingservice.repository.BookingRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -19,6 +21,7 @@ import java.util.Optional;
 @Service
 public class BookingService {
 
+    private final KafkaTemplate<String, BookingConfirmedEvent> kafkaTemplate;
     private final BookingRepository bookingRepository;
     private final WebClient webClient;
 
@@ -31,12 +34,11 @@ public class BookingService {
     @Value("${services.payment-processing-service.url}")
     private String paymentProcessingServiceUrl;
 
-    @Value("${services.notification-service.url}") // New: URL for Notification Service
-    private String notificationServiceUrl;
 
-    public BookingService(BookingRepository bookingRepository, WebClient.Builder webClientBuilder) {
+    public BookingService(KafkaTemplate<String, BookingConfirmedEvent> kafkaTemplate, BookingRepository bookingRepository, WebClient.Builder webClientBuilder) {
         this.bookingRepository = bookingRepository;
         this.webClient = webClientBuilder.build();
+        this.kafkaTemplate = kafkaTemplate;
     }
 
     @Transactional
@@ -54,7 +56,7 @@ public class BookingService {
                     .uri(schedulingAvailabilityServiceUrl + "/availability-slots/{id}/decrease-seats?numSeats={numSeats}",
                             availabilitySlotId, numberOfSeats)
                     .retrieve()
-                    .onStatus(status -> status.is4xxClientError(), response -> {
+                    .onStatus(HttpStatusCode::is4xxClientError, response -> {
                         response.bodyToMono(String.class).subscribe(body -> System.err.println("Client Error from Scheduling-Availability-Service: " + body));
                         return Mono.error(new RuntimeException("Not enough seats available or invalid slot (4xx error) from Scheduling-Availability-Service. Status: " + response.statusCode()));
                     })
@@ -114,28 +116,26 @@ public class BookingService {
             // --- Step 4: Send Notification (New Integration) ---
             System.out.println("BookingService: Calling Notification-Service to send confirmation for booking " + bookingId);
             try {
-                // In a real app, you'd get the user's email/phone from a User Service
-                // For this example, we'll use a placeholder or derived info.
-                // Assuming userId can be mapped to an email for notification.
-                NotificationRequest notificationRequest = new NotificationRequest(
-                        "user" + savedBooking.getUserId() + "@example.com", // Example recipient
-                        "Booking Confirmation for Cultural Space",
-                        "Your booking (" + savedBooking.getId() + ") for " +
-                                savedBooking.getNumberOfSeats() + " seats at slot " +
-                                savedBooking.getAvailabilitySlotId() + " has been successfully confirmed. " +
-                                "Total Amount: " + savedBooking.getTotalAmount() + " EUR."
+
+                // 1. Create the Kafka event object
+                BookingConfirmedEvent event = new BookingConfirmedEvent(
+                        bookingId,
+                        userId,
+                        numberOfSeats,
+                        totalAmount
                 );
 
-                webClient.post()
-                        .uri(notificationServiceUrl + "/notifications/send")
-                        .bodyValue(notificationRequest)
-                        .retrieve()
-                        .onStatus(status -> status.isError(), response -> {
-                            response.bodyToMono(String.class).subscribe(body -> System.err.println("Error from Notification-Service: " + body));
-                            return Mono.error(new RuntimeException("Notification service failed. Status: " + response.statusCode()));
-                        })
-                        .bodyToMono(Void.class) // Notification service returns String, but we only care about success
-                        .block(); // Block and wait for notification to be sent (or use subscribe() for async)
+                // 2. Send the event to Kafka asynchronously
+                // "booking-confirmed-topic" is the Kafka topic name.
+                // event.getBookingId().toString() is the message key (for partitioning).
+                // 'event' is the message value (your DTO).
+                kafkaTemplate.send("booking-confirmed-topic", event.getBookingId().toString(), event)
+                        .whenComplete((result, ex) -> {
+                            if (ex != null) {
+                                // In a real application, you would handle this failure (e.g., retry, dead-letter queue)
+                                // As per your request, no logging here.
+                            }
+                        });
 
                 System.out.println("BookingService: Confirmation notification sent for booking " + bookingId);
 
@@ -157,82 +157,6 @@ public class BookingService {
             handleBookingFailure(bookingId, e.getMessage());
             throw new RuntimeException("Booking process failed: " + e.getMessage(), e);
         }
-    }
-
-    @Transactional
-    public Booking cancelBooking(Long bookingId) {
-        return bookingRepository.findById(bookingId)
-                .map(booking -> {
-                    if ("CONFIRMED".equals(booking.getStatus())) {
-                        System.out.println("BookingService: Initiating cancellation for booking " + bookingId);
-                        try {
-                            // --- Step 1 (Rollback): Increase seats in Scheduling-Availability-Service ---
-                            webClient.post()
-                                    .uri(schedulingAvailabilityServiceUrl + "/availability-slots/{id}/increase-seats?numSeats={numSeats}",
-                                            booking.getAvailabilitySlotId(), booking.getNumberOfSeats())
-                                    .retrieve()
-                                    .onStatus(status -> status.isError(), response -> {
-                                        response.bodyToMono(String.class).subscribe(body -> System.err.println("Error increasing seats for cancellation: " + body));
-                                        return Mono.error(new RuntimeException("Failed to increase seats for cancellation. Status: " + response.statusCode()));
-                                    })
-                                    .bodyToMono(Void.class)
-                                    .block();
-
-                            // --- Step 2 (Rollback): Cancel Reservation in Seat-Reservation-Service ---
-                            if (booking.getReservationId() != null) {
-                                webClient.post()
-                                        .uri(seatReservationServiceUrl + "/reservations/{id}/cancel", booking.getReservationId())
-                                        .retrieve()
-                                        .onStatus(status -> status.isError(), response -> {
-                                            response.bodyToMono(String.class).subscribe(body -> System.err.println("Error cancelling reservation record: " + body));
-                                            return Mono.error(new RuntimeException("Failed to cancel reservation. Status: " + response.statusCode()));
-                                        })
-                                        .bodyToMono(Void.class)
-                                        .block();
-                            }
-
-                            // --- Step 3 (Optional): Refund in Payment-Processing-Service ---
-                            if (booking.getPaymentTransactionId() != null) {
-                                System.out.println("BookingService: Initiating refund for payment " + booking.getPaymentTransactionId());
-                            }
-
-                            // --- Step 4 (New): Send Cancellation Notification ---
-                            try {
-                                NotificationRequest notificationRequest = new NotificationRequest(
-                                        "user" + booking.getUserId() + "@example.com", // Example recipient
-                                        "Booking Cancellation Confirmation",
-                                        "Your booking (" + booking.getId() + ") for slot " +
-                                                booking.getAvailabilitySlotId() + " has been successfully cancelled."
-                                );
-                                webClient.post()
-                                        .uri(notificationServiceUrl + "/notifications/send")
-                                        .bodyValue(notificationRequest)
-                                        .retrieve()
-                                        .onStatus(status -> status.isError(), response -> {
-                                            response.bodyToMono(String.class).subscribe(body -> System.err.println("Error from Notification-Service during cancellation: " + body));
-                                            return Mono.error(new RuntimeException("Notification service failed during cancellation. Status: " + response.statusCode()));
-                                        })
-                                        .bodyToMono(Void.class)
-                                        .block();
-                                System.out.println("BookingService: Cancellation notification sent for booking " + bookingId);
-                            } catch (RuntimeException e) {
-                                System.err.println("BookingService: Failed to send cancellation notification for booking " + bookingId + ": " + e.getMessage());
-                            }
-
-
-                            booking.setStatus("CANCELLED");
-                            System.out.println("BookingService: Booking " + bookingId + " CANCELLED successfully!");
-                            return bookingRepository.save(booking);
-
-                        } catch (RuntimeException e) {
-                            System.err.println("BookingService: Error during cancellation of booking " + bookingId + ": " + e.getMessage());
-                            throw e;
-                        }
-                    } else {
-                        throw new RuntimeException("Booking " + bookingId + " cannot be cancelled as its status is " + booking.getStatus());
-                    }
-                })
-                .orElseThrow(() -> new RuntimeException("Booking not found with ID: " + bookingId));
     }
 
     private void handleBookingFailure(Long bookingId, String reason) {
