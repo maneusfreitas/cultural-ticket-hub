@@ -25,26 +25,23 @@ public class BookingController {
                     request.getUserId(),
                     request.getAvailabilitySlotId(),
                     request.getNumberOfSeats(),
-                    request.getTotalAmount()
+                    request.getTotalAmount(),
+                    request.getPromoCode(),
+                    request.getEventId()
             );
             return new ResponseEntity<>(newBooking, HttpStatus.CREATED);
         } catch (RuntimeException e) {
             System.err.println("Controller error during booking creation: " + e.getMessage());
+            e.printStackTrace(); // Print stack trace for debugging
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(null);
         }
     }
 
     @PostMapping("/{id}/cancel")
     public ResponseEntity<Booking> cancelBooking(@PathVariable Long id) {
-        /*try {
-            Booking cancelledBooking = bookingService.cancelBooking(id);
-            return ResponseEntity.ok(cancelledBooking);
-        } catch (RuntimeException e) {
-            System.err.println("Controller error during booking cancellation: " + e.getMessage());
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(null);
-        }*/
-
-        return ResponseEntity.ok(null);
+        // Implement cancelBooking logic if needed, or leave as a placeholder for now
+        System.out.println("BookingService: Cancel booking endpoint called for ID: " + id + ". Not implemented.");
+        return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).body(null);
     }
 
     @GetMapping("/{id}")

@@ -37,19 +37,22 @@ public class Booking {
 
     private Long reservationId; // ID from seat-reservation-service
     private String paymentTransactionId; // ID from payment-processing-service
+    private String promoCode;
 
     public Booking() {}
 
-    public Booking(Long userId, Long availabilitySlotId, Integer numberOfSeats, BigDecimal totalAmount, LocalDateTime bookingTime, String status) {
+    // Updated constructor to include promoCode
+    public Booking(Long userId, Long availabilitySlotId, Integer numberOfSeats, BigDecimal totalAmount,
+                   LocalDateTime bookingTime, String status, String promoCode) { // promoCode added here
         this.userId = userId;
         this.availabilitySlotId = availabilitySlotId;
         this.numberOfSeats = numberOfSeats;
         this.totalAmount = totalAmount;
         this.bookingTime = bookingTime;
         this.status = status;
+        this.promoCode = promoCode;
     }
 
-    // Getters and Setters
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
     public Long getUserId() { return userId; }
@@ -68,6 +71,8 @@ public class Booking {
     public void setReservationId(Long reservationId) { this.reservationId = reservationId; }
     public String getPaymentTransactionId() { return paymentTransactionId; }
     public void setPaymentTransactionId(String paymentTransactionId) { this.paymentTransactionId = paymentTransactionId; }
+    public String getPromoCode() { return promoCode; }
+    public void setPromoCode(String promoCode) { this.promoCode = promoCode; }
 
     @Override
     public String toString() {
@@ -81,6 +86,7 @@ public class Booking {
                 ", status='" + status + '\'' +
                 ", reservationId=" + reservationId +
                 ", paymentTransactionId='" + paymentTransactionId + '\'' +
+                ", promoCode='" + promoCode + '\'' +
                 '}';
     }
 

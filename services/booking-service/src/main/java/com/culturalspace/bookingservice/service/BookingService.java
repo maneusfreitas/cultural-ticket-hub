@@ -4,7 +4,6 @@ import com.culturalspace.bookingservice.event.BookingConfirmedEvent;
 import com.culturalspace.bookingservice.model.Booking;
 import com.culturalspace.bookingservice.repository.BookingRepository;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
@@ -34,6 +33,9 @@ public class BookingService {
     @Value("${services.payment-processing-service.url}")
     private String paymentProcessingServiceUrl;
 
+    @Value("${services.promotion-service.url}") // New: URL for Promotion Service
+    private String promotionServiceUrl;
+
 
     public BookingService(KafkaTemplate<String, BookingConfirmedEvent> kafkaTemplate, BookingRepository bookingRepository, WebClient.Builder webClientBuilder) {
         this.bookingRepository = bookingRepository;
@@ -42,14 +44,59 @@ public class BookingService {
     }
 
     @Transactional
-    public Booking createBooking(Long userId, Long availabilitySlotId, Integer numberOfSeats, BigDecimal totalAmount) {
-        Booking booking = new Booking(userId, availabilitySlotId, numberOfSeats, totalAmount, LocalDateTime.now(), "PENDING");
+    public Booking createBooking(Long userId, Long availabilitySlotId, Integer numberOfSeats,
+                                 BigDecimal originalTotalAmount, String promoCode, Long eventId) { // Updated signature
+        // Initialize booking with PENDING status and ORIGINAL total amount.
+        // promoCode is also stored from the start.
+        Booking booking = new Booking(userId, availabilitySlotId, numberOfSeats, originalTotalAmount,
+                LocalDateTime.now(), "PENDING", promoCode); // Pass promoCode to constructor
         Booking savedBooking = bookingRepository.save(booking);
         System.out.println("BookingService: Initiated booking " + savedBooking.getId() + " for slot " + availabilitySlotId);
 
         Long bookingId = savedBooking.getId();
+        BigDecimal finalAmount = originalTotalAmount; // Will be updated if promo applies
 
         try {
+            // --- Step 0: Apply Promotion (NEW) ---
+            if (promoCode != null && !promoCode.trim().isEmpty()) {
+                System.out.println("BookingService: Calling Promotion Service to apply discount for promo code: " + promoCode + " for event ID: " + eventId);
+                try {
+                    Double discountedAmountDouble = webClient.post()
+                            .uri(promotionServiceUrl + "/promotions/apply", uriBuilder -> {
+                                uriBuilder = uriBuilder
+                                        .queryParam("originalAmount", originalTotalAmount.doubleValue()) // Convert BigDecimal to Double
+                                        .queryParam("promoCode", promoCode);
+                                if (eventId != null) { // Add eventId if provided
+                                    uriBuilder = uriBuilder.queryParam("eventId", eventId);
+                                }
+                                return uriBuilder.build();
+                            })
+                            .retrieve()
+                            .bodyToMono(Double.class)
+                            .block(); // Block for synchronous call
+
+                    if (discountedAmountDouble != null) {
+                        finalAmount = BigDecimal.valueOf(discountedAmountDouble); // Convert back to BigDecimal
+                        System.out.println("BookingService: Promotion '" + promoCode + "' applied. Original: " + originalTotalAmount + ", Final: " + finalAmount);
+                    } else {
+                        System.err.println("BookingService: Promotion service returned null. Using original amount.");
+                    }
+                } catch (WebClientResponseException e) {
+                    System.err.println("BookingService: Error calling Promotion Service: " + e.getMessage() + ". Using original amount. Response: " + e.getResponseBodyAsString());
+                    System.err.println("Attempted Promotion URL: " + promotionServiceUrl + "/promotions/apply with params. Status: " + e.getStatusCode());
+                } catch (Exception e) {
+                    System.err.println("BookingService: Unexpected error during Promotion Service call: " + e.getMessage() + ". Using original amount.");
+                    System.err.println("Attempted Promotion URL: " + promotionServiceUrl + "/promotions/apply with params.");
+                }
+            } else {
+                System.out.println("BookingService: No promo code provided. Using original total amount.");
+            }
+
+            // Update booking with the final calculated amount (after potential discount)
+            savedBooking.setTotalAmount(finalAmount);
+            savedBooking = bookingRepository.save(savedBooking); // Save the booking with the final amount
+
+
             // --- Step 1: Decrease seats in Scheduling-Availability-Service ---
             System.out.println("BookingService: Calling Scheduling-Availability-Service to decrease seats for slot " + availabilitySlotId);
             webClient.post()
@@ -71,7 +118,7 @@ public class BookingService {
             System.out.println("BookingService: Calling Seat-Reservation-Service to create reservation for slot " + availabilitySlotId);
             ReservationResponse reservationResponse = webClient.post()
                     .uri(seatReservationServiceUrl + "/reservations/book")
-                    .bodyValue(new SeatReservationRequest(availabilitySlotId, userId, numberOfSeats, totalAmount))
+                    .bodyValue(new SeatReservationRequest(availabilitySlotId, userId, numberOfSeats, finalAmount)) // Use finalAmount
                     .retrieve()
                     .onStatus(status -> status.is4xxClientError(), response -> {
                         response.bodyToMono(String.class).subscribe(body -> System.err.println("Client Error from Seat-Reservation-Service: " + body));
@@ -91,7 +138,7 @@ public class BookingService {
             System.out.println("BookingService: Calling Payment-Processing-Service to process payment for booking " + bookingId);
             PaymentResponse paymentResponse = webClient.post()
                     .uri(paymentProcessingServiceUrl + "/payments/process")
-                    .bodyValue(new PaymentRequest(bookingId, totalAmount, "CARD"))
+                    .bodyValue(new PaymentRequest(bookingId, finalAmount, "CARD")) // Use finalAmount
                     .retrieve()
                     .onStatus(status -> status.is4xxClientError(), response -> {
                         response.bodyToMono(String.class).subscribe(body -> System.err.println("Client Error from Payment-Processing-Service: " + body));
@@ -116,24 +163,17 @@ public class BookingService {
             // --- Step 4: Send Notification (New Integration) ---
             System.out.println("BookingService: Calling Notification-Service to send confirmation for booking " + bookingId);
             try {
-
-                // 1. Create the Kafka event object
                 BookingConfirmedEvent event = new BookingConfirmedEvent(
                         bookingId,
                         userId,
                         numberOfSeats,
-                        totalAmount
+                        finalAmount.doubleValue() // Send as Double in Kafka event
                 );
 
-                // 2. Send the event to Kafka asynchronously
-                // "booking-confirmed-topic" is the Kafka topic name.
-                // event.getBookingId().toString() is the message key (for partitioning).
-                // 'event' is the message value (your DTO).
                 kafkaTemplate.send("booking-confirmed-topic", event.getBookingId().toString(), event)
                         .whenComplete((result, ex) -> {
                             if (ex != null) {
-                                // In a real application, you would handle this failure (e.g., retry, dead-letter queue)
-                                // As per your request, no logging here.
+                                System.err.println("BookingService: Failed to send Kafka event for booking " + bookingId + ": " + ex.getMessage());
                             }
                         });
 
@@ -141,9 +181,6 @@ public class BookingService {
 
             } catch (RuntimeException e) {
                 System.err.println("BookingService: Failed to send notification for booking " + bookingId + ": " + e.getMessage());
-                // IMPORTANT: A notification failure should generally NOT rollback the booking.
-                // It should be logged and potentially retried via a separate mechanism (e.g., message queue).
-                // For this example, we'll just log and continue the main booking flow.
             }
 
             return savedBooking;
@@ -164,16 +201,19 @@ public class BookingService {
             booking.setStatus("FAILED");
             bookingRepository.save(booking);
             System.err.println("Booking " + bookingId + " failed. Reason: " + reason);
-            System.out.println("BookingService: Compensating transactions *not* implemented for this simplified example.");
-            System.out.println("BookingService: You would need to add logic here to revert changes made in other services.");
+            System.out.println("BookingService: Compensating transactions *not* fully implemented for this simplified example.");
+            System.out.println("BookingService: You would need to add logic here to revert changes made in other services (e.g., increase seats, refund payment).");
         });
     }
 
-    public static class CreateBookingRequest { /* ... (unchanged) ... */
+    // Updated DTO to include promoCode and eventId
+    public static class CreateBookingRequest {
         private Long userId;
         private Long availabilitySlotId;
         private Integer numberOfSeats;
         private BigDecimal totalAmount;
+        private String promoCode; // New
+        private Long eventId;     // New
 
         public Long getUserId() { return userId; }
         public void setUserId(Long userId) { this.userId = userId; }
@@ -183,9 +223,13 @@ public class BookingService {
         public void setNumberOfSeats(Integer numberOfSeats) { this.numberOfSeats = numberOfSeats; }
         public BigDecimal getTotalAmount() { return totalAmount; }
         public void setTotalAmount(BigDecimal totalAmount) { this.totalAmount = totalAmount; }
+        public String getPromoCode() { return promoCode; } // New
+        public void setPromoCode(String promoCode) { this.promoCode = promoCode; } // New
+        public Long getEventId() { return eventId; } // New
+        public void setEventId(Long eventId) { this.eventId = eventId; } // New
     }
 
-    private static class SeatReservationRequest { /* ... (unchanged) ... */
+    private static class SeatReservationRequest {
         private Long availabilitySlotId;
         private Long userId;
         private Integer numberOfSeats;
@@ -204,7 +248,7 @@ public class BookingService {
         public BigDecimal getTotalPrice() { return totalPrice; }
     }
 
-    private static class ReservationResponse { /* ... (unchanged) ... */
+    private static class ReservationResponse {
         private Long id;
         private String status;
         public Long getId() { return id; }
@@ -213,7 +257,7 @@ public class BookingService {
         public void setStatus(String status) { this.status = status; }
     }
 
-    private static class PaymentRequest { /* ... (unchanged) ... */
+    private static class PaymentRequest {
         private Long bookingId;
         private BigDecimal amount;
         private String paymentMethod;
@@ -229,7 +273,7 @@ public class BookingService {
         public String getPaymentMethod() { return paymentMethod; }
     }
 
-    private static class PaymentResponse { /* ... (unchanged) ... */
+    private static class PaymentResponse {
         private String transactionId;
         private String status;
         public String getTransactionId() { return transactionId; }
@@ -238,26 +282,7 @@ public class BookingService {
         public void setStatus(String status) { this.status = status; }
     }
 
-    // New DTO for Notification Service (defined as a nested class for simplicity)
-    private static class NotificationRequest {
-        private String recipient;
-        private String subject;
-        private String message;
-
-        public NotificationRequest(String recipient, String subject, String message) {
-            this.recipient = recipient;
-            this.subject = subject;
-            this.message = message;
-        }
-
-        public String getRecipient() { return recipient; }
-        public void setRecipient(String recipient) { this.recipient = recipient; }
-        public String getSubject() { return subject; }
-        public void setSubject(String subject) { this.subject = subject; }
-        public String getMessage() { return message; }
-        public void setMessage(String message) { this.message = message; }
-    }
-
+    // Removed NotificationRequest as it's not directly used in the current Kafka event setup.
 
     @Transactional(readOnly = true)
     public Optional<Booking> getBookingById(Long id) {

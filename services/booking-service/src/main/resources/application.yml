@@ -36,3 +36,5 @@ services:
     url: http://localhost:8083
   payment-processing-service:
     url: http://localhost:8085
+  promotion-service:
+    url: http://localhost:8087

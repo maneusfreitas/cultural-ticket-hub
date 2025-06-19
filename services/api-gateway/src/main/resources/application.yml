@@ -1,0 +1,147 @@
+server:
+  port: 8088
+
+spring:
+  application:
+    name: api-gateway
+
+  cloud:
+    gateway:
+      routes:
+        # --- Routes for your individual Microservices ---
+
+        # 1. User Profile Service
+        - id: user-profile-service-route
+          uri: http://localhost:8080
+          predicates:
+            - Path=/users/**
+
+        # 2. Cultural Entity Catalog Service
+        - id: event-catalog-service-route
+          uri: http://localhost:8081
+          predicates:
+            - Path=/events/**
+
+        # 3. Scheduling & Availability Service
+        - id: scheduling-availability-service-route
+          uri: http://localhost:8082
+          predicates:
+            - Path=/availability-slots/**
+
+        # 4. Seat Reservation Service
+        - id: seat-reservation-service-route
+          uri: http://localhost:8083
+          predicates:
+            - Path=/reservations/**
+
+        # 5. Booking Service
+        - id: booking-service-route
+          uri: http://localhost:8084
+          predicates:
+            - Path=/bookings/**
+
+        # 6. Payment Service
+        - id: payment-processing-route
+          uri: http://localhost:8085
+          predicates:
+            - Path=/payments/**
+
+        # 7. Promotion Service
+        - id: promotion-service-route
+          uri: lb://promotion-service
+          predicates:
+            - Path=/promotions/**
+
+        # 8. Notification Service
+        - id: notification-service-route
+          uri: http://localhost:8086
+          predicates:
+            - Path=/notifications/**
+
+        # --- OpenAPI documentation routes for each service ---
+        # These routes expose the /v3/api-docs from each service under a unique path in the gateway
+        - id: user-profile-openapi
+          uri: http://localhost:8080 # CORRECTED: Changed from 8082 to 8080 to match user-profile-service-route
+          predicates:
+            - Path=/v3/api-docs/user-profile-service # Gateway path
+          filters:
+            - RewritePath=/v3/api-docs/user-profile-service, /v3/api-docs # Rewrites to actual service path
+
+        - id: cultural-entity-openapi
+          uri: http://localhost:8081
+          predicates:
+            - Path=/v3/api-docs/cultural-entity-service
+          filters:
+            - RewritePath=/v3/api-docs/cultural-entity-service, /v3/api-docs
+
+        - id: scheduling-openapi
+          uri: http://localhost:8082 # This assumes Scheduling & Availability Service is indeed on 8082
+          predicates:
+            - Path=/v3/api-docs/scheduling-service
+          filters:
+            - RewritePath=/v3/api-docs/scheduling-service, /v3/api-docs
+
+        - id: seat-reservation-openapi
+          uri: http://localhost:8083
+          predicates:
+            - Path=/v3/api-docs/seat-reservation-service
+          filters:
+            - RewritePath=/v3/api-docs/seat-reservation-service, /v3/api-docs
+
+        - id: booking-openapi
+          uri: http://localhost:8084
+          predicates:
+            - Path=/v3/api-docs/booking-service
+          filters:
+            - RewritePath=/v3/api-docs/booking-service, /v3/api-docs
+
+        - id: payment-openapi
+          uri: http://localhost:8085
+          predicates:
+            - Path=/v3/api-docs/payment-service
+          filters:
+            - RewritePath=/v3/api-docs/payment-service, /v3/api-docs
+
+        - id: promotion-openapi
+          uri: lb://promotion-service
+          predicates:
+            - Path=/v3/api-docs/promotion-service
+          filters:
+            - RewritePath=/v3/api-docs/promotion-service, /v3/api-docs
+
+        - id: notification-openapi
+          uri: http://localhost:8086 # CORRECTED: Changed from 8088 to 8086 to match notification-service-route
+          predicates:
+            - Path=/v3/api-docs/notification-service
+          filters:
+            - RewritePath=/v3/api-docs/notification-service, /v3/api-docs
+
+# SpringDoc OpenAPI Configuration
+springdoc:
+  cache:
+    disabled: true # Good for development/debugging this issue
+  swagger-ui:
+    enabled: true
+    path: /swagger-ui.html
+    urls:
+      - name: User Profile Service
+        url: /v3/api-docs/user-profile-service
+      - name: Cultural Entity Catalog Service
+        url: /v3/api-docs/cultural-entity-service
+      - name: Scheduling & Availability Service
+        url: /v3/api-docs/scheduling-service
+      - name: Seat Reservation Service
+        url: /v3/api-docs/seat-reservation-service
+      - name: Booking Service
+        url: /v3/api-docs/booking-service
+      - name: Payment Service
+        url: /v3/api-docs/payment-service
+      - name: Promotion Service
+        url: /v3/api-docs/promotion-service
+      - name: Notification Service
+        url: /v3/api-docs/notification-service
+    display-request-duration: true
+    operations-sorter: alpha
+    disable-swagger-default-url: true
+  api-docs:
+    enabled: true

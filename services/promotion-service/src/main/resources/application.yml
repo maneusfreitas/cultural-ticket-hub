@@ -1,0 +1,19 @@
+server:
+  port: 8090 # Choose a unique port for the Promotion Service
+
+spring:
+  application:
+    name: promotion-service
+  datasource:
+    url: jdbc:postgresql://localhost:5432/promotion_db # New database
+    username: user_profile_user
+    password: your_new_secure_password
+    driverClassName: org.postgresql.Driver
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
